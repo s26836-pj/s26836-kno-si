@@ -1,0 +1,1 @@
+**Autor:** Błażej Kanczkowski (indeks: s26836)
