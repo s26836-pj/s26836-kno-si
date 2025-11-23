@@ -68,7 +68,6 @@ LOGROOT = (HERE / "runs_tf" / f"wine_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 MODELS_DIR = HERE / "models"
 
 CSV_CANDIDATES = [
-    HERE / "wine.csv",
     HERE / "wine_shuffled.csv",
     HERE / "data" / "processed" / "wine.csv",
 ]
@@ -296,64 +295,104 @@ if not PREDICT_ONLY:
     if USE_TB:
         print(f"\n[TENSORBOARD] uruchom w terminalu:\n  tensorboard --logdir {LOGROOT.as_posix()}\n")
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Klasyfikacja wina (Model A) – podaj 13 cech jako argumenty CLI."
-    )
-    parser.add_argument("--predict-only", action="store_true")
-    parser.add_argument("--use-tb", action="store_true")
-    parser.add_argument("--no-plots", action="store_true")
-
-    feature_names = COLUMN_NAMES[1:]
-    cli_to_feat = {}
-    for feat in feature_names:
-        cli = feat.replace("/", "_")
-        cli_to_feat[cli] = feat
-        parser.add_argument(f"--{cli}", type=float, required=False, help=f"Wartość cechy: {feat}")
-
-    args = parser.parse_args(_remaining)
+def run_cli_prediction(args, feature_names):
+    """
+    Obsługa predykcji z linii komend:
+    - oczekuje 13 cech wina jako parametrów CLI,
+    - korzysta z zapisanych: scaler_train_stats.npz, model_A.keras, model_B.keras (jeśli istnieje).
+    """
+    cli_to_feat = {feat.replace("/", "_"): feat for feat in feature_names}
 
     any_feature = any(getattr(args, cli) is not None for cli in cli_to_feat.keys())
     if not any_feature:
         if PREDICT_ONLY:
-            print("\n[INFO] PREDICT-ONLY bez podanych cech. Podaj 13 cech jako --alcohol ... --proline, itd.")
+            print("\n[INFO] PREDICT-ONLY bez podanych cech. "
+                  "Podaj 13 cech jako --alcohol ... --proline, itd.")
         else:
             print("\n[INFO] Nie podano cech wina — zakończono trening/ewaluację, predykcję pomijam.")
+        return
+
+    scaler_stats_path = HERE / "scaler_train_stats.npz"
+    if not scaler_stats_path.exists():
+        raise FileNotFoundError(
+            f"Brak statystyk standaryzacji: {scaler_stats_path} "
+            f"(uruchom trening albo dostarcz plik)."
+        )
+
+    scaler_stats = np.load(scaler_stats_path)
+    mean, std = scaler_stats["mean"], scaler_stats["std"]
+
+    row, missing = [], []
+    for feat in feature_names:
+        cli = feat.replace("/", "_")
+        val = getattr(args, cli)
+        if val is None:
+            missing.append(cli)
+            row.append(0.0)
+        else:
+            row.append(float(val))
+
+    if missing:
+        print(f"[WARN] Nie podano wartości dla: {', '.join(missing)}. Używam 0.0 dla braków.")
+
+    x = np.array([row], dtype=np.float32)
+    x_std = (x - mean) / std
+
+    model_a_path = MODELS_DIR / "model_A.keras"
+    if not model_a_path.exists():
+        raise FileNotFoundError(
+            f"Brak modelu A: {model_a_path} (uruchom trening albo dostarcz plik)."
+        )
+
+    model_a = tf.keras.models.load_model(model_a_path)
+    probs_a = model_a.predict(x_std, verbose=0)
+    predicted_class_a = int(np.argmax(probs_a) + 1)
+
+    print("\n" + "=" * 40)
+    print("WYNIK KLASYFIKACJI (Model A)")
+    print(f"Predykowana klasa wina: {predicted_class_a}  (1..3)")
+    print("Prawdopodobieństwa [class1, class2, class3]:", np.round(probs_a[0], 3))
+    print("=" * 40)
+
+    model_b_path = MODELS_DIR / "model_B.keras"
+    if model_b_path.exists():
+        model_b = tf.keras.models.load_model(model_b_path)
+
+        probs_b = model_b.predict(x_std, verbose=0)
+        predicted_class_b = int(np.argmax(probs_b) + 1)
+
+        print("\n" + "=" * 40)
+        print("WYNIK KLASYFIKACJI (Model B)")
+        print(f"Predykowana klasa wina: {predicted_class_b}  (1..3)")
+        print("Prawdopodobieństwa [class1, class2, class3]:", np.round(probs_b[0], 3))
+        print("=" * 40)
     else:
-        model_path = MODELS_DIR / "model_A.keras"
-        if not model_path.exists():
-            raise FileNotFoundError(f"Brak modelu: {model_path} (uruchom trening albo dostarcz plik).")
+        print(
+            f"\n[INFO] Pomijam predykcję Modelu B: Nie znaleziono pliku {model_b_path.name} "
+            f"(wymagany jest trening)."
+        )
 
-        model = tf.keras.models.load_model(model_path)
+if __name__ == "__main__":
+    import argparse
 
-        scaler_stats_path = HERE / "scaler_train_stats.npz"
-        if not scaler_stats_path.exists():
-            raise FileNotFoundError(f"Brak statystyk standaryzacji: {scaler_stats_path} (uruchom trening albo dostarcz plik).")
+    parser = argparse.ArgumentParser(
+        description="Klasyfikacja wina (Model A/B) – podaj 13 cech jako argumenty CLI."
+    )
 
-        scaler_stats = np.load(scaler_stats_path)
-        mean, std = scaler_stats["mean"], scaler_stats["std"]
+    feature_names = COLUMN_NAMES[1:]  # pomijamy 'class'
+    for feat in feature_names:
+        cli = feat.replace("/", "_")
+        parser.add_argument(
+            f"--{cli}",
+            type=float,
+            required=False,
+            help=f"Wartość cechy: {feat}",
+        )
 
-        row, missing = [], []
-        for feat in feature_names:
-            cli = feat.replace("/", "_")
-            val = getattr(args, cli)
-            if val is None:
-                missing.append(cli)
-                row.append(0.0)
-            else:
-                row.append(float(val))
+    # Używamy _remaining z wcześniejszego parse_known_args()
+    args = parser.parse_args(_remaining)
 
-        if missing:
-            print(f"[WARN] Nie podano wartości dla: {', '.join(missing)}. Używam 0.0 dla braków.")
+    run_cli_prediction(args, feature_names)
 
-        x = np.array([row], dtype=np.float32)
-        x_std = (x - mean) / std
 
-        probs = model.predict(x_std, verbose=0)
-        predicted_class = int(np.argmax(probs) + 1)
-
-        print("\nWYNIK KLASYFIKACJI (Model A)")
-        print(f"Predykowana klasa wina: {predicted_class}  (1..3)")
-        print("Prawdopodobieństwa [class1, class2, class3]:", np.round(probs[0], 3))
+#Podzilic rowniez na funkcje wystarcza.
