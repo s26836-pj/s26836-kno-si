@@ -1,0 +1,21 @@
+{
+  "seed": 42,
+  "split": {
+    "test_size": 0.2,
+    "val_split_from_train": 0.2
+  },
+  "model_A": {
+    "epochs": 120,
+    "batch_size": 16,
+    "learning_rate": 0.001,
+    "test_loss": 0.2635299265384674,
+    "test_acc": 1.0
+  },
+  "model_B": {
+    "epochs": 160,
+    "batch_size": 16,
+    "learning_rate": 0.01,
+    "test_loss": 0.05668721720576286,
+    "test_acc": 1.0
+  }
+}
